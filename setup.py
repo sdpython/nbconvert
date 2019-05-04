@@ -16,8 +16,8 @@ name = 'nbconvert'
 import sys
 
 v = sys.version_info
-if v[:2] < (2,7) or (v[0] >= 3 and v[:2] < (3,4)):
-    error = "ERROR: %s requires Python version 2.7 or 3.4 or above." % name
+if v[:2] < (2,7) or (v[0] >= 3 and v[:2] < (3,5)):
+    error = "ERROR: %s requires Python version 2.7 or 3.5 or above." % name
     print(error, file=sys.stderr)
     sys.exit(1)
 
@@ -169,7 +169,7 @@ setup_args = dict(
     long_description= long_description,
     package_data    = package_data,
     cmdclass        = cmdclass,
-    python_requires = '>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*',
+    python_requires = '>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*',
     author          = 'Jupyter Development Team',
     author_email    = 'jupyter@googlegroups.com',
     url             = 'https://jupyter.org',
@@ -190,7 +190,6 @@ setup_args = dict(
         'Programming Language :: Python',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
@@ -199,7 +198,7 @@ setup_args = dict(
 
 setup_args['install_requires'] = [
     'mistune>=0.8.1',
-    'jinja2',
+    'jinja2>=2.4',
     'pygments',
     'traitlets>=4.2',
     'jupyter_core',
@@ -213,7 +212,7 @@ setup_args['install_requires'] = [
 jupyter_client_req = 'jupyter_client>=4.2'
 
 extra_requirements = {
-    'test': ['pytest', 'pytest-cov', 'ipykernel', jupyter_client_req],
+    'test': ['pytest', 'pytest-cov', 'mock', 'ipykernel', jupyter_client_req, 'ipywidgets>=7'],
     'serve': ['tornado>=4.0'],
     'execute': [jupyter_client_req],
     'docs': ['sphinx>=1.5.1',
