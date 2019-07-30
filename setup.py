@@ -197,7 +197,7 @@ setup_args = dict(
 )
 
 setup_args['install_requires'] = [
-    'mistune>=0.8.1',
+    'mistune>=0.8.1,<2',
     'jinja2>=2.4',
     'pygments',
     'traitlets>=4.2',
@@ -209,10 +209,10 @@ setup_args['install_requires'] = [
     'testpath',
     'defusedxml',
 ]
-jupyter_client_req = 'jupyter_client>=4.2'
+jupyter_client_req = 'jupyter_client>=4.3'
 
 extra_requirements = {
-    'test': ['pytest', 'pytest-cov', 'mock', 'ipykernel', jupyter_client_req, 'ipywidgets>=7'],
+    'test': ['pytest', 'pytest-cov', 'mock; python_version < "3.4"', 'ipykernel', jupyter_client_req, 'ipywidgets>=7', 'pebble'],
     'serve': ['tornado>=4.0'],
     'execute': [jupyter_client_req],
     'docs': ['sphinx>=1.5.1',

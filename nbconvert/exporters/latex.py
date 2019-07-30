@@ -7,6 +7,7 @@ import os
 
 from traitlets import Unicode, default
 from traitlets.config import Config
+from jupyter_core.paths import jupyter_path
 
 from nbconvert.filters.highlight import Highlight2Latex
 from nbconvert.filters.filter_links import resolve_references
@@ -15,13 +16,12 @@ from .templateexporter import TemplateExporter
 class LatexExporter(TemplateExporter):
     """
     Exports to a Latex template.  Inherit from this class if your template is
-    LaTeX based and you need custom tranformers/filters.  Inherit from it if 
-    you are writing your own HTML template and need custom tranformers/filters.  
-    If you don't need custom tranformers/filters, just change the 
+    LaTeX based and you need custom transformers/filters.
+    If you don't need custom transformers/filters, just change the 
     'template_file' config option.  Place your template in the special "/latex" 
     subfolder of the "../templates" folder.
     """
-    export_from_notebook = "latex"
+    export_from_notebook = "LaTeX"
 
     @default('file_extension')
     def _file_extension_default(self):
@@ -39,6 +39,10 @@ class LatexExporter(TemplateExporter):
     @default('template_skeleton_path')
     def _template_skeleton_path_default(self):
         return os.path.join("..", "templates", "latex", "skeleton")
+
+    @default('template_data_paths')
+    def _template_data_paths_default(self):
+        return jupyter_path("nbconvert", "templates", "latex")
     
     #Extension that the template files use.
     template_extension = Unicode(".tplx").tag(config=True)

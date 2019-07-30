@@ -8,6 +8,7 @@ import os
 
 from traitlets import default, Unicode
 from traitlets.config import Config
+from jupyter_core.paths import jupyter_path
 from jinja2 import contextfilter
 
 from nbconvert.filters.highlight import Highlight2HTML
@@ -23,7 +24,7 @@ class HTMLExporter(TemplateExporter):
     custom preprocessors/filters.  If you don't need custom preprocessors/
     filters, just change the 'template_file' config option.
     """
-    export_from_notebook = "html"
+    export_from_notebook = "HTML"
 
     anchor_link_text = Unicode(u'¶',
         help="The text used as the text for anchor links.").tag(config=True)
@@ -35,6 +36,10 @@ class HTMLExporter(TemplateExporter):
     @default('default_template_path')
     def _default_template_path_default(self):
         return os.path.join("..", "templates", "html")
+
+    @default('template_data_paths')
+    def _template_data_paths_default(self):
+        return jupyter_path("nbconvert", "templates", "html")
 
     @default('template_file')
     def _template_file_default(self):
@@ -71,7 +76,7 @@ class HTMLExporter(TemplateExporter):
     @contextfilter
     def markdown2html(self, context, source):
         """Markdown to HTML filter respecting the anchor_link_text setting"""
-        cell = context['cell']
+        cell = context.get('cell', {})
         attachments = cell.get('attachments', {})
         renderer = IPythonRenderer(escape=False, attachments=attachments,
                                    anchor_link_text=self.anchor_link_text)

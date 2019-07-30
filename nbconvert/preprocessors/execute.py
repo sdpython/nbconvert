@@ -6,6 +6,10 @@ and updates outputs"""
 import base64
 from textwrap import dedent
 from contextlib import contextmanager
+try:
+    from time import monotonic # Py 3
+except ImportError:
+    from time import time as monotonic # Py 2
 
 try:
     from queue import Empty  # Py 3
@@ -220,6 +224,20 @@ class ExecutePreprocessor(Preprocessor):
             )
     ).tag(config=True)
 
+    ipython_hist_file = Unicode(
+        default_value=':memory:',
+        help="""Path to file to use for SQLite history database for an IPython kernel.
+        
+        The specific value `:memory:` (including the colon
+        at both end but not the back ticks), avoids creating a history file. Otherwise, IPython
+        will create a history file for each kernel. 
+        
+        When running kernels simultaneously (e.g. via multiprocessing) saving history a single
+        SQLite file can result in database errors, so using `:memory:` is recommended in non-interactive
+        contexts.
+        
+        """).tag(config=True)
+
     kernel_manager_class = Type(
         config=True,
         help='The kernel manager class to use.'
@@ -268,6 +286,8 @@ class ExecutePreprocessor(Preprocessor):
                 'kernelspec', {}).get('name', 'python')
         km = self.kernel_manager_class(kernel_name=self.kernel_name,
                                        config=self.config)
+        if km.ipykernel and self.ipython_hist_file:
+            self.extra_arguments += ['--HistoryManager.hist_file={}'.format(self.ipython_hist_file)]
         km.start_kernel(extra_arguments=self.extra_arguments, **kwargs)
 
         kc = km.client()
@@ -282,7 +302,7 @@ class ExecutePreprocessor(Preprocessor):
         return km, kc
 
     @contextmanager
-    def setup_preprocessor(self, nb, resources, km=None):
+    def setup_preprocessor(self, nb, resources, km=None, **kwargs):
         """
         Context manager for setting up the class to execute a notebook.
 
@@ -303,7 +323,7 @@ class ExecutePreprocessor(Preprocessor):
             passing ``{'metadata': {'path': run_path}}`` sets the
             execution path to ``run_path``.
         km : KernerlManager (optional)
-            Optional kernel manaher. If none is provided, a kernel manager will
+            Optional kernel manager. If none is provided, a kernel manager will
             be created.
 
         Returns
@@ -321,7 +341,8 @@ class ExecutePreprocessor(Preprocessor):
         self.widget_buffers = {}
 
         if km is None:
-            self.km, self.kc = self.start_new_kernel(cwd=path)
+            kwargs["cwd"] = path
+            self.km, self.kc = self.start_new_kernel(**kwargs)
             try:
                 # Yielding unbound args for more easier understanding and downstream consumption
                 yield nb, self.km, self.kc
@@ -350,7 +371,7 @@ class ExecutePreprocessor(Preprocessor):
                 for attr in ['nb', 'km', 'kc']:
                     delattr(self, attr)
 
-    def preprocess(self, nb, resources, km=None):
+    def preprocess(self, nb, resources=None, km=None):
         """
         Preprocess notebook executing each code cell.
 
@@ -360,7 +381,7 @@ class ExecutePreprocessor(Preprocessor):
         ----------
         nb : NotebookNode
             Notebook being executed.
-        resources : dictionary
+        resources : dictionary (optional)
             Additional resources used in the conversion process. For example,
             passing ``{'metadata': {'path': run_path}}`` sets the
             execution path to ``run_path``.
@@ -375,6 +396,9 @@ class ExecutePreprocessor(Preprocessor):
         resources : dictionary
             Additional resources used in the conversion process.
         """
+
+        if not resources:
+            resources = {}
 
         with self.setup_preprocessor(nb, resources, km=km):
             self.log.info("Executing notebook with kernel: %s" % self.kernel_name)
@@ -402,7 +426,7 @@ class ExecutePreprocessor(Preprocessor):
                 if buffers:
                     widget['buffers'] = buffers
 
-    def preprocess_cell(self, cell, resources, cell_index):
+    def preprocess_cell(self, cell, resources, cell_index, store_history=True):
         """
         Executes a single code cell. See base.py for details.
 
@@ -411,8 +435,8 @@ class ExecutePreprocessor(Preprocessor):
         if cell.cell_type != 'code' or not cell.source.strip():
             return cell, resources
 
-        reply, outputs = self.run_cell(cell, cell_index)
-        # Backwards compatability for processes that wrap run_cell
+        reply, outputs = self.run_cell(cell, cell_index, store_history)
+        # Backwards compatibility for processes that wrap run_cell
         cell.outputs = outputs
 
         cell_allows_errors = (self.allow_errors or "raises-exception"
@@ -448,6 +472,36 @@ class ExecutePreprocessor(Preprocessor):
                 outputs[output_idx]['data'] = out['data']
                 outputs[output_idx]['metadata'] = out['metadata']
 
+    def _poll_for_reply(self, msg_id, cell=None, timeout=None):
+        try:
+            # check with timeout if kernel is still alive
+            msg = self.kc.shell_channel.get_msg(timeout=timeout)
+            if msg['parent_header'].get('msg_id') == msg_id:
+                return msg
+        except Empty:
+            # received no message, check if kernel is still alive
+            self._check_alive()
+            # kernel still alive, wait for a message
+
+    def _get_timeout(self, cell):
+        if self.timeout_func is not None and cell is not None:
+            timeout = self.timeout_func(cell)
+        else:
+            timeout = self.timeout
+
+        if not timeout or timeout < 0:
+            timeout = None
+
+        return timeout
+
+    def _handle_timeout(self):
+        self.log.error(
+            "Timeout waiting for execute reply (%is)." % self.timeout)
+        if self.interrupt_on_timeout:
+            self.log.error("Interrupting kernel")
+            self.km.interrupt_kernel()
+        else:
+            raise TimeoutError("Cell execution timed out")
 
     def _check_alive(self):
         if not self.kc.is_alive():
@@ -457,13 +511,7 @@ class ExecutePreprocessor(Preprocessor):
 
     def _wait_for_reply(self, msg_id, cell=None):
         # wait for finish, with timeout
-        if self.timeout_func is not None and cell is not None:
-            timeout = self.timeout_func(cell)
-        else:
-            timeout = self.timeout
-
-        if not timeout or timeout < 0:
-            timeout = None
+        timeout = self._get_timeout(cell)
         cummulative_time = 0
         timeout_interval = 5
         while True:
@@ -473,51 +521,95 @@ class ExecutePreprocessor(Preprocessor):
                 self._check_alive()
                 cummulative_time += timeout_interval
                 if timeout and cummulative_time > timeout:
-                    self.log.error(
-                        "Timeout waiting for execute reply (%is)." % self.timeout)
-                    if self.interrupt_on_timeout:
-                        self.log.error("Interrupting kernel")
-                        self.km.interrupt_kernel()
-                        break
-                    else:
-                        raise TimeoutError("Cell execution timed out")
+                    self._handle_timeout()
+                    break
             else:
                 if msg['parent_header'].get('msg_id') == msg_id:
                     return msg
 
-    def run_cell(self, cell, cell_index=0):
-        parent_msg_id = self.kc.execute(cell.source)
+    def _timeout_with_deadline(self, timeout, deadline):
+        if deadline is not None and deadline - monotonic() < timeout:
+            timeout = deadline - monotonic()
+
+        if timeout < 0:
+            timeout = 0
+
+        return timeout
+
+    def _passed_deadline(self, deadline):
+        if deadline is not None and deadline - monotonic() <= 0:
+            self._handle_timeout()
+            return True
+        return False
+
+    def run_cell(self, cell, cell_index=0, store_history=True):
+        parent_msg_id = self.kc.execute(cell.source,
+            store_history=store_history, stop_on_error=not self.allow_errors)
         self.log.debug("Executing cell:\n%s", cell.source)
-        exec_reply = self._wait_for_reply(parent_msg_id, cell)
+        exec_timeout = self._get_timeout(cell)
+        deadline = None
+        if exec_timeout is not None:
+            deadline = monotonic() + exec_timeout
 
         cell.outputs = []
         self.clear_before_next_output = False
 
-        while True:
-            try:
-                # We've already waited for execute_reply, so all output
-                # should already be waiting. However, on slow networks, like
-                # in certain CI systems, waiting < 1 second might miss messages.
-                # So long as the kernel sends a status:idle message when it
-                # finishes, we won't actually have to wait this long, anyway.
-                msg = self.kc.iopub_channel.get_msg(timeout=self.iopub_timeout)
-            except Empty:
-                self.log.warning("Timeout waiting for IOPub output")
-                if self.raise_on_iopub_timeout:
-                    raise RuntimeError("Timeout waiting for IOPub output")
-                else:
-                    break
+        # This loop resolves #659. By polling iopub_channel's and shell_channel's
+        # output we avoid dropping output and important signals (like idle) from
+        # iopub_channel. Prior to this change, iopub_channel wasn't polled until
+        # after exec_reply was obtained from shell_channel, leading to the
+        # aforementioned dropped data.
+
+        # These two variables are used to track what still needs polling:
+        # more_output=true => continue to poll the iopub_channel
+        more_output = True
+        # polling_exec_reply=true => continue to poll the shell_channel
+        polling_exec_reply = True
+
+        while more_output or polling_exec_reply:
+            if polling_exec_reply:
+                if self._passed_deadline(deadline):
+                    polling_exec_reply = False
+                    continue
+
+                # Avoid exceeding the execution timeout (deadline), but stop
+                # after at most 1s so we can poll output from iopub_channel.
+                timeout = self._timeout_with_deadline(1, deadline)
+                exec_reply = self._poll_for_reply(parent_msg_id, cell, timeout)
+                if exec_reply is not None:
+                    polling_exec_reply = False
+
+            if more_output:
+                try:
+                    timeout = self.iopub_timeout
+                    if polling_exec_reply:
+                        # Avoid exceeding the execution timeout (deadline) while
+                        # polling for output.
+                        timeout = self._timeout_with_deadline(timeout, deadline)
+                    msg = self.kc.iopub_channel.get_msg(timeout=timeout)
+                except Empty:
+                    if polling_exec_reply:
+                        # Still waiting for execution to finish so we expect that
+                        # output may not always be produced yet.
+                        continue
+
+                    if self.raise_on_iopub_timeout:
+                        raise TimeoutError("Timeout waiting for IOPub output")
+                    else:
+                        self.log.warning("Timeout waiting for IOPub output")
+                        more_output = False
+                        continue
             if msg['parent_header'].get('msg_id') != parent_msg_id:
                 # not an output from our execution
                 continue
 
-            # Will raise CellExecutionComplete when completed
             try:
+                # Will raise CellExecutionComplete when completed
                 self.process_message(msg, cell, cell_index)
             except CellExecutionComplete:
-                break
+                more_output = False
 
-        # Return cell.outputs still for backwards compatability
+        # Return cell.outputs still for backwards compatibility
         return exec_reply, cell.outputs
 
     def process_message(self, msg, cell, cell_index):
