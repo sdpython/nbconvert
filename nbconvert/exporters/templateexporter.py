@@ -58,6 +58,7 @@ default_filters = {
         'get_metadata': filters.get_metadata,
         'convert_pandoc': filters.convert_pandoc,
         'json_dumps': json.dumps,
+        'strip_trailing_newline': filters.strip_trailing_newline,
 }
 
 class ExtensionTolerantLoader(BaseLoader):
@@ -319,6 +320,7 @@ class TemplateExporter(Exporter):
 
         # Top level variables are passed to the template_exporter here.
         output = self.template.render(nb=nb_copy, resources=resources)
+        output = output.lstrip('\r\n')
         return output, resources
 
     def _register_filter(self, environ, name, jinja_filter):
