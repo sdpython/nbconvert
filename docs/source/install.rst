@@ -15,7 +15,7 @@ Nbconvert is packaged for both pip and conda, so you can install it with::
     # OR
     conda install nbconvert
 
-If you're new to Python, we recommend installing `Anaconda <https://www.continuum.io/downloads>`_,
+If you're new to Python, we recommend installing `Anaconda <https://www.anaconda.com/distribution/>`_,
 a Python distribution which includes nbconvert and the other Jupyter components.
 
 .. important::
@@ -58,7 +58,7 @@ packages are specific to different operating systems:
 
 * Linux: `TeX Live <http://tug.org/texlive/>`_
 
-  * E.g. on Debian or Ubuntu: ``sudo apt-get install texlive-xetex``
+  * E.g. on Debian or Ubuntu: ``sudo apt-get install texlive-xetex texlive-fonts-recommended texlive-generic-recommended``
 
 * macOS (OS X): `MacTeX <http://tug.org/mactex/>`_.
 * Windows: `MikTex <http://www.miktex.org/>`_
